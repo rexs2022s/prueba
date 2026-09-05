@@ -51,7 +51,7 @@
   <div id="s-arena" class="screen">
     <div style="font-size:13px;color:var(--text-secondary)">Sos el <b id="who">—</b> · Sala <b id="room-lbl">—</b></div>
     <canvas id="game" width="640" height="360"></canvas>
-    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px"><kbd>A</kbd><kbd>D</kbd> mover · <kbd>Espacio</kbd> saltar · <kbd>S</kbd> agacharse</div>
+    <div style="font-size:12px;color:var(--text-secondary);margin-top:8px"><kbd>A</kbd><kbd>D</kbd> mover · <kbd>Espacio</kbd> saltar · <kbd>S</kbd> agacharse · 🖱️ izq atacar (apuntás con mouse) · der escudo</div>
     <div id="status">—</div>
     <button class="btn ghost" id="leave" style="margin-top:8px">Salir</button>
   </div>
@@ -86,15 +86,29 @@ const W=canvas.width, H=canvas.height, GROUND=H-40;
 const GRAV=0.08, JUMP=-5, SPEED=2.0, FALL_GRAV=0.108;
 
 // estado local del jugador
-const me={ x:W/2, y:GROUND, vx:0, vy:0, facing:1, onGround:true, crouch:false };
+const me={ x:W/2, y:GROUND, vx:0, vy:0, facing:1, onGround:true, crouch:false, attacking:0, attackDir:"front", shielding:false };
 // estado del rival (lo que leemos de Firebase)
-let opp={ x:W/2, y:GROUND, facing:-1, crouch:false };
-let oppTarget={ x:W/2, y:GROUND, facing:-1, crouch:false }; // para interpolar
+let opp={ x:W/2, y:GROUND, facing:-1, crouch:false, attacking:0, attackDir:"front", shielding:false };
+let oppTarget={ x:W/2, y:GROUND, facing:-1, crouch:false, attacking:0, attackDir:"front", shielding:false };
+const ATTACK_DUR=18;
+const mouse={x:W/2,y:H/2};
 
 let code=null, side=null, roomRef=null, roomUnsub=null, started=false;
 const keys={};
 window.addEventListener("keydown",e=>{ const k=e.key.toLowerCase(); keys[k]=true; if(["a","d","s"," "].includes(k)&&$("s-arena").classList.contains("active"))e.preventDefault(); });
 window.addEventListener("keyup",e=>{ keys[e.key.toLowerCase()]=false; });
+
+canvas.addEventListener("mousemove",e=>{ const r=canvas.getBoundingClientRect(); mouse.x=(e.clientX-r.left)*(W/r.width); mouse.y=(e.clientY-r.top)*(H/r.height); });
+canvas.addEventListener("mousedown",e=>{ e.preventDefault(); if(e.button===0)doAttack(); else if(e.button===2)me.shielding=true; });
+canvas.addEventListener("mouseup",e=>{ if(e.button===2)me.shielding=false; });
+canvas.addEventListener("contextmenu",e=>e.preventDefault());
+function doAttack(){
+  if(me.attacking>0||me.shielding)return;
+  const cy=me.y-(me.crouch?18:28), dx=mouse.x-me.x, dy=mouse.y-cy;
+  let dir="front";
+  if(dy<-Math.abs(dx)*0.8)dir="up"; else if(dy>Math.abs(dx)*0.8)dir="down"; else me.facing=(mouse.x>=me.x)?1:-1;
+  me.attacking=ATTACK_DUR; me.attackDir=dir;
+}
 
 function genCode(){ const c="ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; let s=""; for(let i=0;i<4;i++)s+=c[Math.floor(Math.random()*c.length)]; return s; }
 
@@ -130,7 +144,7 @@ function subscribe(){
     if(side==="p1" && r.p2 && !started){ startArena(); }
     // leer al rival
     const oppSide = side==="p1"?"p2":"p1";
-    if(r[oppSide]){ oppTarget.x=r[oppSide].x; oppTarget.y=r[oppSide].y; oppTarget.facing=r[oppSide].facing; oppTarget.crouch=r[oppSide].crouch; }
+    if(r[oppSide]){ const o=r[oppSide]; oppTarget.x=o.x; oppTarget.y=o.y; oppTarget.facing=o.facing; oppTarget.crouch=o.crouch; oppTarget.attacking=o.attacking||0; oppTarget.attackDir=o.attackDir||"front"; oppTarget.shielding=!!o.shielding; }
   });
 }
 
@@ -154,7 +168,7 @@ async function sendState(){
   const now=performance.now();
   if(now-lastSent<66)return; // ~15/s
   lastSent=now;
-  try{ await update(ref(db,"enf_mp/"+code+"/"+side),{ x:Math.round(me.x), y:Math.round(me.y), facing:me.facing, crouch:me.crouch }); }catch(e){}
+  try{ await update(ref(db,"enf_mp/"+code+"/"+side),{ x:Math.round(me.x), y:Math.round(me.y), facing:me.facing, crouch:me.crouch, attacking:me.attacking, attackDir:me.attackDir, shielding:me.shielding }); }catch(e){}
 }
 
 function update_me(){
@@ -167,6 +181,7 @@ function update_me(){
   me.x+=me.vx; me.y+=me.vy;
   if(me.y>=GROUND){ me.y=GROUND; me.vy=0; me.onGround=true; }
   me.x=Math.max(12,Math.min(W-12,me.x));
+  if(me.attacking>0)me.attacking--;
 }
 
 function lerp(a,b,t){ return a+(b-a)*t; }
@@ -174,15 +189,34 @@ function interpOpp(){
   opp.x=lerp(opp.x,oppTarget.x,0.25);
   opp.y=lerp(opp.y,oppTarget.y,0.25);
   opp.facing=oppTarget.facing; opp.crouch=oppTarget.crouch;
+  opp.attacking=oppTarget.attacking; opp.attackDir=oppTarget.attackDir; opp.shielding=oppTarget.shielding;
 }
 
-function drawChar(x,y,facing,crouch,color){
+function drawChar(f,color){
+  const x=f.x,y=f.y,facing=f.facing,crouch=f.crouch;
   const bodyH=crouch?20:34, headR=7, topY=y-bodyH, headY=topY-headR-2;
   ctx.save(); ctx.translate(x,0); ctx.scale(facing,1); ctx.lineWidth=3; ctx.lineCap="round"; ctx.strokeStyle="#efe7db";
   ctx.beginPath(); ctx.arc(0,headY,headR,0,Math.PI*2); ctx.fillStyle="#e0c9a6"; ctx.fill(); ctx.stroke();
   ctx.strokeStyle=color; ctx.lineWidth=5; ctx.beginPath(); ctx.moveTo(0,topY); ctx.lineTo(0,y-12); ctx.stroke();
   ctx.strokeStyle="#efe7db"; ctx.lineWidth=3;
-  const armY=topY+6; ctx.beginPath(); ctx.moveTo(0,armY); ctx.lineTo(-7,armY+8); ctx.moveTo(0,armY); ctx.lineTo(7,armY+8); ctx.stroke();
+  const armY=topY+6;
+  ctx.beginPath(); ctx.moveTo(0,armY); ctx.lineTo(-7,armY+8); ctx.stroke();
+  if(f.shielding){
+    ctx.beginPath(); ctx.moveTo(0,armY); ctx.lineTo(10,armY+3); ctx.stroke();
+    ctx.fillStyle="#c9b070"; ctx.strokeStyle="#efe7db"; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(13,armY-5); ctx.lineTo(22,armY-1); ctx.lineTo(22,armY+9); ctx.lineTo(13,armY+14); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle="#efe7db"; ctx.lineWidth=3;
+  } else if(f.attacking>0){
+    const prog=1-(f.attacking/ATTACK_DUR), swing=Math.sin(prog*Math.PI), reach=10+swing*22; let tx,ty;
+    if(f.attackDir==="up"){tx=5;ty=armY-4-reach;} else if(f.attackDir==="down"){tx=5;ty=armY+4+reach;} else {tx=reach;ty=armY-4-swing*4;}
+    const mx=tx/2,my=(armY+ty)/2;
+    ctx.beginPath(); ctx.moveTo(0,armY); ctx.lineTo(mx,my); ctx.stroke();
+    ctx.strokeStyle="#d8d8e0"; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(mx,my); ctx.lineTo(tx,ty); ctx.stroke();
+    ctx.strokeStyle="#d9a441"; ctx.lineWidth=3; ctx.beginPath(); ctx.moveTo(mx-3,my+3); ctx.lineTo(mx+3,my-3); ctx.stroke();
+    ctx.strokeStyle="#efe7db"; ctx.lineWidth=3;
+  } else {
+    ctx.beginPath(); ctx.moveTo(0,armY); ctx.lineTo(7,armY+8); ctx.stroke();
+  }
   const sp=crouch?8:5; ctx.beginPath(); ctx.moveTo(0,y-12); ctx.lineTo(-sp,y); ctx.moveTo(0,y-12); ctx.lineTo(sp,y); ctx.stroke();
   ctx.restore();
 }
@@ -193,8 +227,8 @@ function render(){
   ctx.strokeStyle="#554b40"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,GROUND+2); ctx.lineTo(W,GROUND+2); ctx.stroke();
   const meColor = side==="p1"?"#c85a5a":"#5a86c8";
   const oppColor = side==="p1"?"#5a86c8":"#c85a5a";
-  drawChar(opp.x,opp.y,opp.facing,opp.crouch,oppColor);
-  drawChar(me.x,me.y,me.facing,me.crouch,meColor);
+  drawChar(opp,oppColor);
+  drawChar(me,meColor);
 }
 
 function loop(){
