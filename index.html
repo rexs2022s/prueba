@@ -289,13 +289,29 @@
     });
   }
 
+  function isGuest(){ return net.online && net.side==="p2"; }
   function openConfig(){
     $("config-house").innerHTML='<span style="color:'+cfg.house.c+'">'+cfg.house.i+' Casa '+cfg.house.n+'</span>';
     buildOpts(fightOpts, FIGHT, ()=>cfg.fightMode, setFightMode, fightDesc);
     buildOpts(dmgOpts, DMG, ()=>cfg.dmgMode, k=>cfg.dmgMode=k, dmgDesc);
     cfg.stats={atk:0,def:0,agi:0,spd:0,rng:0}; renderStats();
     refreshDmgLock();
+    lockModesForGuest();
     go("config");
+  }
+  function lockModesForGuest(){
+    // El invitado (p2) NO elige modos: los define el anfitrión. Solo Casa y stats.
+    const guest=isGuest();
+    Array.from(fightOpts.children).forEach(b=>{
+      b.disabled=guest;
+      const isSel = b.textContent.indexOf(cfg.fightMode==="larganoche"?"La Larga Noche":(cfg.fightMode==="frenesi"?"Frenesí":"Estándar"))>=0;
+      b.style.opacity = guest && !isSel ? "0.35" : "1";
+    });
+    Array.from(dmgOpts.children).forEach(b=>{ if(guest){ b.disabled=true; const isSel=b.textContent.indexOf(cfg.dmgMode==="caos"?"Caos":"Normal")>=0; b.style.opacity=isSel?"1":"0.35"; } });
+    if(guest){
+      fightDesc.textContent="El anfitrión eligió este modo. Solo elegí tu Casa y tus puntos.";
+      dmgDesc.textContent="";
+    }
   }
   function setFightMode(k){
     cfg.fightMode=k;
