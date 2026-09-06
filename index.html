@@ -50,14 +50,45 @@
         <button class="btn" id="btn-cpu">Partida contra el bot</button>
         <button class="btn" id="btn-create">Crear partida vs otro jugador</button>
         <button class="btn ghost" id="btn-join" style="font-size:15px;padding:12px 28px">Poner código de partida</button>
+        <button class="btn ghost" id="btn-spectate" style="font-size:15px;padding:12px 28px">👁️ Ver partida (espectador)</button>
         <button class="btn ghost" id="btn-practice" style="font-size:15px;padding:12px 28px">Modo práctica (sin rival)</button>
+        <button class="btn ghost" id="btn-keys" style="font-size:15px;padding:12px 28px">⌨️ Configurar teclas</button>
       </div>
       <div style="margin-top:18px">
         <label style="display:inline-flex;align-items:center;gap:8px;font-size:13px;color:var(--text-secondary);cursor:pointer">
           <input type="checkbox" id="touch-toggle"> Activar controles táctiles (celular)
         </label>
       </div>
-      <div style="font-size:11px;color:var(--text-muted);margin-top:14px">Versión de prueba (solo bot por ahora)</div>
+    </div>
+  </div>
+
+  <!-- LISTA DE PARTIDAS (espectador) -->
+  <div id="s-spectate" class="screen">
+    <div style="text-align:center;padding-top:2rem;max-width:460px;margin:0 auto">
+      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted)">Modo espectador</div>
+      <div style="font-size:22px;font-weight:500;margin:6px 0 1rem">👁️ Partidas en curso</div>
+      <div id="spectate-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div id="spectate-empty" style="font-size:13px;color:var(--text-muted);margin-top:1rem;display:none">No hay partidas en curso ahora mismo.</div>
+      <div style="margin-top:1.25rem;display:flex;gap:10px;justify-content:center">
+        <button class="btn ghost" id="spectate-back">Volver</button>
+        <button class="btn ghost" id="spectate-refresh">Actualizar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- CONFIGURAR TECLAS -->
+  <div id="s-keys" class="screen">
+    <div style="text-align:center;padding-top:2rem;max-width:420px;margin:0 auto">
+      <div style="font-size:12px;letter-spacing:2px;text-transform:uppercase;color:var(--text-muted)">Configuración</div>
+      <div style="font-size:22px;font-weight:500;margin:6px 0 1rem">⌨️ Tus teclas</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-bottom:1rem">Tocá una acción y apretá la tecla que quieras asignarle. Se guardan solo en tu dispositivo.</div>
+      <div id="keys-list" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:12px">Atacar y Escudo también funcionan con el mouse (click izq / der), aunque les asignes tecla.</div>
+      <div style="margin-top:1.25rem;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+        <button class="btn ghost" id="keys-reset">Restaurar por defecto</button>
+        <button class="btn" id="keys-back">Guardar y volver</button>
+      </div>
+      <div id="keys-hint" style="font-size:12px;color:var(--text-danger);margin-top:8px;min-height:16px"></div>
     </div>
   </div>
 
@@ -212,7 +243,110 @@
   const cfg={ house:null, fightMode:"frenesi", dmgMode:"normal", stats:{atk:0,def:0,agi:0,spd:0,rng:0} };
   const TOTAL_PTS=7;
 
-  const screens=["home","join","wait","pick","config","arena"];
+  const screens=["home","spectate","keys","join","wait","pick","config","arena"];
+
+  // ===== teclas configurables (guardadas por dispositivo) =====
+  const DEFAULT_KEYS={ left:"a", right:"d", jump:" ", crouch:"s", attack:"", shield:"" };
+  const KEY_ACTIONS=[
+    {k:"left",n:"◀ Izquierda"},{k:"right",n:"▶ Derecha"},
+    {k:"jump",n:"▲ Saltar"},{k:"crouch",n:"▼ Agacharse"},
+    {k:"attack",n:"⚔️ Atacar (opcional)"},{k:"shield",n:"🛡️ Escudo (opcional)"}
+  ];
+  let userKeys=loadKeys();
+  function loadKeys(){
+    try{ const s=localStorage.getItem("enf_keys"); if(s){ const o=JSON.parse(s); return Object.assign({}, DEFAULT_KEYS, o); } }catch(e){}
+    return Object.assign({}, DEFAULT_KEYS);
+  }
+  function saveKeys(){ try{ localStorage.setItem("enf_keys", JSON.stringify(userKeys)); }catch(e){} }
+  function keyLabel(v){ if(v===" ")return "Espacio"; if(v==="")return "—"; if(v.indexOf("arrow")===0)return {arrowleft:"←",arrowright:"→",arrowup:"↑",arrowdown:"↓"}[v]||v; return v.toUpperCase(); }
+
+  let listeningFor=null; // acción esperando tecla
+  function renderKeys(){
+    const list=$("keys-list"); list.innerHTML="";
+    KEY_ACTIONS.forEach(a=>{
+      const row=document.createElement("div");
+      row.style.cssText="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-1);border:0.5px solid var(--border);border-radius:10px;padding:10px 14px";
+      const listening = listeningFor===a.k;
+      row.innerHTML='<span style="font-size:14px">'+a.n+'</span>'
+        +'<button data-k="'+a.k+'" style="min-width:90px;padding:7px 14px;border-radius:8px;border:0.5px solid '+(listening?"var(--text-danger)":"var(--border-strong)")+';background:var(--surface-2);color:var(--text-primary);cursor:pointer;font-size:13px">'+(listening?"Apretá una tecla…":keyLabel(userKeys[a.k]))+'</button>';
+      list.appendChild(row);
+    });
+    list.querySelectorAll("button").forEach(b=>{
+      b.onclick=()=>{ listeningFor=b.getAttribute("data-k"); $("keys-hint").textContent="Apretá la tecla para «"+KEY_ACTIONS.find(x=>x.k===listeningFor).n+"» (o Escape para dejar vacío)."; renderKeys(); };
+    });
+  }
+  // captura de tecla mientras configurás
+  window.addEventListener("keydown",function(e){
+    if(listeningFor && $("s-keys").classList.contains("active")){
+      e.preventDefault();
+      let v=e.key.toLowerCase();
+      if(e.key==="Escape"){ v=""; } // vaciar
+      // evitar duplicados: si otra acción ya usa esa tecla, la libera
+      if(v!==""){ for(const kk in userKeys){ if(userKeys[kk]===v) userKeys[kk]=""; } }
+      userKeys[listeningFor]=v;
+      listeningFor=null; $("keys-hint").textContent=""; saveKeys(); renderKeys();
+      return;
+    }
+  }, true);
+
+  $("btn-keys").onclick=()=>{ startMusic(); listeningFor=null; $("keys-hint").textContent=""; renderKeys(); go("keys"); };
+  $("keys-back").onclick=()=>{ saveKeys(); go("home"); };
+  $("keys-reset").onclick=()=>{ userKeys=Object.assign({}, DEFAULT_KEYS); saveKeys(); listeningFor=null; renderKeys(); };
+
+  // ===== MODO ESPECTADOR =====
+  let specUnsub=null, specCode=null, specRoom=null, spectating=false;
+  let specP1={x:205,y:390,facing:1,crouch:false,attacking:0,attackDir:"front",shielding:false,house:null,hp:100,maxHP:100,color:"#c85a5a",hitFlash:0,onGround:true,vx:0},
+      specP2={x:435,y:390,facing:-1,crouch:false,attacking:0,attackDir:"front",shielding:false,house:null,hp:100,maxHP:100,color:"#5a86c8",hitFlash:0,onGround:true,vx:0};
+
+  $("btn-spectate").onclick=()=>{ startMusic(); loadSpectateList(); go("spectate"); };
+  $("spectate-back").onclick=()=>go("home");
+  $("spectate-refresh").onclick=()=>loadSpectateList();
+
+  async function loadSpectateList(){
+    const list=$("spectate-list"); list.innerHTML='<div style="font-size:13px;color:var(--text-muted)">Buscando partidas…</div>';
+    $("spectate-empty").style.display="none";
+    try{
+      const snap=await get(ref(db,"enf_rooms"));
+      const rooms=snap.val()||{};
+      const active=[];
+      for(const code in rooms){
+        const r=rooms[code];
+        if(r && r.p1 && r.p2 && (r.phase==="fight"||r.phase==="countdown")){ active.push({code, r}); }
+      }
+      list.innerHTML="";
+      if(active.length===0){ $("spectate-empty").style.display="block"; return; }
+      active.forEach(({code,r})=>{
+        const h1=r.p1.house?houseByName(r.p1.house):null, h2=r.p2.house?houseByName(r.p2.house):null;
+        const b=document.createElement("button");
+        b.style.cssText="display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--surface-1);border:0.5px solid var(--border);border-radius:10px;padding:12px 14px;cursor:pointer;color:var(--text-primary)";
+        b.innerHTML='<span style="font-size:14px">'+(h1?h1.i+" Casa "+h1.n:"—")+' <span style="color:var(--text-muted)">vs</span> '+(h2?h2.i+" Casa "+h2.n:"—")+'</span>'
+          +'<span style="font-size:12px;color:var(--text-secondary)">👁️ Ver</span>';
+        b.onclick=()=>startSpectate(code);
+        list.appendChild(b);
+      });
+    }catch(e){ list.innerHTML='<div style="font-size:13px;color:var(--text-danger)">Error al cargar. Probá Actualizar.</div>'; }
+  }
+
+  function startSpectate(code){
+    specCode=code; spectating=true;
+    net.online=false; // el espectador NO es jugador
+    specUnsub=onValue(ref(db,"enf_rooms/"+code), snap=>{
+      const r=snap.val();
+      if(!r){ if(spectating){ arenaMsg.textContent="La partida terminó o se cerró."; } return; }
+      specRoom=r;
+      // cargar casas y config
+      if(r.p1&&r.p1.house){ specP1.house=houseByName(r.p1.house); }
+      if(r.p2&&r.p2.house){ specP2.house=houseByName(r.p2.house); }
+      const hp=r.fightMode==="larganoche"?200:100; specP1.maxHP=hp; specP2.maxHP=hp;
+      cfg.fightMode=r.fightMode; cfg.dmgMode=r.dmgMode;
+    });
+    // preparar arena en modo espectador
+    gameOver=false; countdown=0; msgTimer=0; arenaMsg.textContent="";
+    $("arena-again").style.display="none";
+    $("arena-mode").textContent="👁️ Espectador · "+(specRoom&&specRoom.fightMode==="larganoche"?"La Larga Noche":(specRoom&&specRoom.fightMode==="frenesi"?"Frenesí":"Estándar"));
+    go("arena");
+  }
+  function stopSpectate(){ if(specUnsub){ off(ref(db,"enf_rooms/"+specCode)); specUnsub=null; } spectating=false; specCode=null; specRoom=null; }
   function go(name){ screens.forEach(s=>$("s-"+s).classList.toggle("active",s===name)); }
 
   /* música */
@@ -512,8 +646,26 @@
     tryAttackDir(p1, dir);
   }
 
-  window.addEventListener("keydown",function(e){ const k=e.key.toLowerCase(); keys[k]=true; if(["w","a","s","d"," ","arrowup","arrowdown","arrowleft","arrowright"].indexOf(k)>=0 && $("s-arena").classList.contains("active"))e.preventDefault(); });
-  window.addEventListener("keyup",function(e){ keys[e.key.toLowerCase()]=false; });
+  window.addEventListener("keydown",function(e){
+    const k=e.key.toLowerCase(); keys[k]=true;
+    if($("s-arena").classList.contains("active")){
+      // teclas de acción configurables (atacar / escudo)
+      if(userKeys.attack && k===userKeys.attack && !e.repeat){ e.preventDefault(); keyAttack(); }
+      if(userKeys.shield && k===userKeys.shield){ e.preventDefault(); tryShield(p1,true); }
+      if(["w","a","s","d"," ","arrowup","arrowdown","arrowleft","arrowright"].indexOf(k)>=0)e.preventDefault();
+    }
+  });
+  window.addEventListener("keyup",function(e){
+    const k=e.key.toLowerCase(); keys[k]=false;
+    if(userKeys.shield && k===userKeys.shield){ tryShield(p1,false); }
+  });
+  function keyAttack(){
+    // dirección según lo que tenga apretado (arriba/abajo configurables o flechas)
+    const up = keys[userKeys.jump]||keys["arrowup"];
+    const down = keys[userKeys.crouch]||keys["arrowdown"];
+    const dir = up?"up":(down?"down":"front");
+    tryAttackDir(p1, dir);
+  }
   canvas.addEventListener("mousemove",function(e){ const r=canvas.getBoundingClientRect(); mouse.x=(e.clientX-r.left)*(W/r.width); mouse.y=(e.clientY-r.top)*(H/r.height); });
   canvas.addEventListener("mousedown",function(e){ e.preventDefault(); if(e.button===0)tryAttackMouse(p1); else if(e.button===2)tryShield(p1,true); });
   canvas.addEventListener("mouseup",function(e){ if(e.button===2)tryShield(p1,false); });
@@ -541,8 +693,11 @@
 
   function controlP1(f){ if(f.stun>0){ applyMove(f,0,false); return; }
     let m=0;
-    const left=keys["a"]||keys["arrowleft"]||touch.left, right=keys["d"]||keys["arrowright"]||touch.right;
-    const jump=keys[" "]||keys["arrowup"]||touch.up, crouch=(keys["s"]||keys["arrowdown"]||touch.down);
+    const uk=userKeys;
+    const left = keys[uk.left]||keys["arrowleft"]||touch.left;
+    const right = keys[uk.right]||keys["arrowright"]||touch.right;
+    const jump = keys[uk.jump]||keys["arrowup"]||touch.up;
+    const crouch = keys[uk.crouch]||keys["arrowdown"]||touch.down;
     if(left){m-=1;f.facing=-1;} if(right){m+=1;f.facing=1;}
     f.crouch=(crouch&&f.onGround);
     applyMove(f,m,jump);
@@ -751,7 +906,10 @@
   }
   function tick(){
     if($("s-arena").classList.contains("active")){
-      if(net.online && net.started){
+      if(spectating){
+        // ---- MODO ESPECTADOR (solo mira) ----
+        renderSpectate();
+      } else if(net.online && net.started){
         // ---- MODO ONLINE ----
         netReadOpp();
         if(countdown>0){ countdown--; render(); drawCountdown(); }
@@ -813,8 +971,36 @@
     $("arena-mode").textContent = (cfg.practice?"Práctica · ":"")+modeName+" · "+(cfg.dmgMode==="caos"?"Caos":"Normal");
     go("arena");
   }
-  $("arena-again").onclick=()=>{ leaveRoom(); resetNetFlags(); go("home"); };
-  $("arena-menu").onclick=()=>{ gameOver=true; leaveRoom(); resetNetFlags(); go("home"); };
+  function renderSpectate(){
+    if(specRoom){
+      // interpolar posiciones de ambos peleadores hacia lo que dice Firebase
+      const a=specRoom.p1, b=specRoom.p2;
+      if(a){ specP1.x+=((a.x||205)-specP1.x)*0.25; specP1.y+=((a.y||390)-specP1.y)*0.25; specP1.facing=a.facing||1; specP1.crouch=!!a.crouch; specP1.attacking=a.attacking||0; specP1.attackDir=a.attackDir||"front"; specP1.shielding=!!a.shielding; if(specP1.house)specP1.color=specP1.house.c; }
+      if(b){ specP2.x+=((b.x||435)-specP2.x)*0.25; specP2.y+=((b.y||390)-specP2.y)*0.25; specP2.facing=b.facing||-1; specP2.crouch=!!b.crouch; specP2.attacking=b.attacking||0; specP2.attackDir=b.attackDir||"front"; specP2.shielding=!!b.shielding; if(specP2.house)specP2.color=specP2.house.c; }
+      if(specRoom.hp){ if(typeof specRoom.hp.p1==="number")specP1.hp=specRoom.hp.p1; if(typeof specRoom.hp.p2==="number")specP2.hp=specRoom.hp.p2; }
+      if(specRoom.over && specRoom.result){ arenaMsg.textContent=specRoom.result; }
+    }
+    // dibujar
+    ctx.clearRect(0,0,W,H);
+    ctx.strokeStyle="rgba(85,75,64,0.15)"; ctx.lineWidth=1;
+    for(let gx=0;gx<=W;gx+=40){ctx.beginPath();ctx.moveTo(gx,0);ctx.lineTo(gx,H);ctx.stroke();}
+    for(let gy=0;gy<=H;gy+=40){ctx.beginPath();ctx.moveTo(0,gy);ctx.lineTo(W,gy);ctx.stroke();}
+    ctx.fillStyle="#26211d"; ctx.fillRect(0,GROUND+2,W,H-GROUND);
+    ctx.strokeStyle="#554b40"; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(0,GROUND+2); ctx.lineTo(W,GROUND+2); ctx.stroke();
+    [specP1,specP2].forEach(f=>{ const af=Math.max(0.3,1-(GROUND-f.y)/200); ctx.fillStyle="rgba(0,0,0,0.35)"; ctx.beginPath(); ctx.ellipse(f.x,GROUND+4,14*af,4*af,0,0,Math.PI*2); ctx.fill(); });
+    if(specP1.house) drawFighter(specP1);
+    if(specP2.house) drawFighter(specP2);
+    // barras de vida
+    const bw=250,bh=16,pad=16;
+    hpBar(pad,pad,bw,bh,specP1.hp/specP1.maxHP,specP1.house?specP1.house.c:"#c85a5a",specP1.house?"Casa "+specP1.house.n:"Jugador 1",false,specP1.maxHP);
+    hpBar(W-pad-bw,pad,bw,bh,specP2.hp/specP2.maxHP,specP2.house?specP2.house.c:"#5a86c8",specP2.house?"Casa "+specP2.house.n:"Jugador 2",true,specP2.maxHP);
+    // cartel espectador
+    ctx.fillStyle="rgba(217,138,106,0.9)"; ctx.font="13px Georgia"; ctx.textAlign="center";
+    ctx.fillText("👁️ Modo espectador", W/2, 30); ctx.textAlign="left";
+  }
+
+  $("arena-again").onclick=()=>{ leaveRoom(); resetNetFlags(); stopSpectate(); go("home"); };
+  $("arena-menu").onclick=()=>{ gameOver=true; leaveRoom(); resetNetFlags(); stopSpectate(); go("home"); };
   function resetNetFlags(){ net.online=false; net.side=null; net.started=false; netRoom=null; netOppTarget=null; }
 
   // ================= MULTIJUGADOR: arena en red =================
