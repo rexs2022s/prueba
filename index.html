@@ -207,6 +207,7 @@
     {n:"Frey",i:"🏰",c:"#b8afa6"},{n:"Mallister",i:"🦅",c:"#5aa0e0"},
     {n:"Blackwood",i:"🌳",c:"#6aaa50"},{n:"Bracken",i:"🔶",c:"#e0a840"}
   ];
+  function houseByName(n){ for(const h of HOUSES){ if(h.n===n) return h; } return HOUSES[0]; }
 
   const cfg={ house:null, fightMode:"frenesi", dmgMode:"normal", stats:{atk:0,def:0,agi:0,spd:0,rng:0} };
   const TOTAL_PTS=7;
