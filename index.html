@@ -84,8 +84,13 @@
         <div id="wait-code" style="font-size:32px;font-weight:500;letter-spacing:6px">----</div>
         <button class="btn ghost" id="wait-copy" style="margin-top:8px">Copiar código</button>
       </div>
+      <div id="wait-players" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;max-width:420px;margin:1rem auto"></div>
       <div id="wait-status" style="font-size:14px;color:var(--text-secondary);margin-top:8px;min-height:22px">Esperando al otro jugador…</div>
-      <button class="btn ghost" id="wait-cancel" style="margin-top:1rem">Cancelar</button>
+      <div style="margin-top:1.25rem;display:flex;gap:10px;justify-content:center">
+        <button class="btn ghost" id="wait-cancel">Salir</button>
+        <button class="btn" id="wait-ready">Listo</button>
+      </div>
+      <div id="wait-countdown" style="font-size:40px;font-weight:500;margin-top:1rem;min-height:48px"></div>
     </div>
   </div>
 
@@ -340,14 +345,14 @@
   // ---- crear sala (p1, anfitrión) ----
   async function createRoom(){
     net.code=genCode(); net.roomRef=ref(db,"enf_rooms/"+net.code);
+    const hp=(cfg.fightMode==="larganoche"?200:100);
     await set(net.roomRef, {
       createdAt:Date.now(), fightMode:cfg.fightMode, dmgMode:cfg.dmgMode,
-      p1:{ house:cfg.house.n, stats:cfg.stats, x:0,y:0,facing:1,crouch:false,attacking:0,attackDir:"front",shielding:false, ready:true },
-      p2:null, phase:"lobby", hp:{p1:(cfg.fightMode==="larganoche"?200:100),p2:(cfg.fightMode==="larganoche"?200:100)},
-      outcome:null
+      p1:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:0,y:0,facing:1,crouch:false,attacking:0,attackDir:"front",shielding:false },
+      p2:null, phase:"lobby", hp:{p1:hp,p2:hp}, outcome:null
     });
     onDisconnect(net.roomRef).remove();
-    $("wait-code").textContent=net.code; $("wait-status").textContent="Esperando al otro jugador…";
+    $("wait-code").textContent=net.code;
     subscribeRoom(); go("wait");
   }
   $("wait-copy").onclick=()=>{ if(navigator.clipboard&&net.code)navigator.clipboard.writeText(net.code); $("wait-status").textContent="Código copiado: "+net.code; };
@@ -356,44 +361,65 @@
   // ---- unirse (p2) ----
   async function joinRoom(){
     net.roomRef=ref(db,"enf_rooms/"+net.code);
-    await update(net.roomRef, { p2:{ house:cfg.house.n, stats:cfg.stats, x:0,y:0,facing:-1,crouch:false,attacking:0,attackDir:"front",shielding:false, ready:true } });
+    await update(net.roomRef, { p2:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:0,y:0,facing:-1,crouch:false,attacking:0,attackDir:"front",shielding:false } });
     onDisconnect(ref(db,"enf_rooms/"+net.code+"/p2")).remove();
-    subscribeRoom();
-    // p2 espera a que el host ponga phase=fight
-    $("wait-code").textContent=net.code; $("wait-status").textContent="¡Conectado! Empezando…"; go("wait");
+    $("wait-code").textContent=net.code;
+    subscribeRoom(); go("wait");
+  }
+
+  // ---- botón Listo ----
+  $("wait-ready").onclick=async()=>{
+    $("wait-ready").disabled=true; $("wait-ready").textContent="Listo ✓";
+    await update(ref(db,"enf_rooms/"+net.code+"/"+net.side),{ ready:true });
+    // el host, si ambos listos, pasa a countdown
+    const snap=await get(net.roomRef); const r=snap.val();
+    if(net.side==="p1" && r && r.p1 && r.p2 && r.p1.ready && r.p2.ready && r.phase==="lobby"){
+      await update(net.roomRef,{phase:"countdown"});
+    }
+  };
+
+  function houseByNameSafe(n){ return n?houseByName(n):null; }
+  function waitCard(p,label){
+    const h=p&&p.house?houseByName(p.house):null;
+    return '<div style="background:var(--surface-1);border:0.5px solid var(--border);border-radius:12px;padding:12px">'
+      +'<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px">'+label+'</div>'
+      +'<div style="font-size:22px;margin:4px 0">'+(h?h.i:"—")+'</div>'
+      +'<div style="font-size:14px;font-weight:500;color:'+(h?h.c:"var(--text-muted)")+'">'+(h?"Casa "+h.n:"esperando…")+'</div>'
+      +'<div style="font-size:12px;margin-top:6px;color:'+((p&&p.ready)?"var(--text-secondary)":"var(--text-muted)")+'">'+((p&&p.ready)?"✓ Listo":"sin confirmar")+'</div></div>';
+  }
+  function renderWait(r){
+    $("wait-players").innerHTML=waitCard(r.p1,"Jugador 1")+waitCard(r.p2,"Jugador 2");
+    const st=$("wait-status");
+    if(!r.p2||!r.p2.house) st.textContent="Esperando a que el otro jugador se una…";
+    else if(!(r.p1.ready&&r.p2.ready)) st.textContent="Marquen «Listo» los dos para comenzar.";
+    else st.textContent="¡Ambos listos!";
   }
 
   // ---- suscripción a la sala ----
-  let netRoom=null;
+  let netRoom=null, waitCountdownStarted=false;
   function subscribeRoom(){
-    net.started=false; net.countdownStarted=false;
+    net.started=false; waitCountdownStarted=false;
+    $("wait-ready").disabled=false; $("wait-ready").textContent="Listo"; $("wait-countdown").textContent="";
     net.unsub=onValue(net.roomRef, snap=>{
       const r=snap.val(); netRoom=r;
-      if(!r){ if(net.started){ arenaMsg.textContent="El rival salió."; gameOver=true; } cleanupNet(); return; }
-      // Cuando ambos jugadores están presentes y la sala sigue en lobby, arrancar la pelea.
-      // Antes solo el host (p1) disparaba esto; si su listener no entraba, p2 se quedaba
-      // congelado en "¡Conectado! Empezando…". Ahora el host la dispara y p2 tiene red de
-      // seguridad por si el host tarda, de modo que la transición siempre ocurre.
-      const bothReady = r.p1 && r.p1.house && r.p2 && r.p2.house;
-      if(bothReady && r.phase==="lobby"){
-        if(net.side==="p1"){
-          update(net.roomRef,{phase:"fight"});
-        }else{
-          // p2: si el host no cambió la fase en ~1.2s, la empuja p2 como respaldo
-          if(!net.fightKick){
-            net.fightKick=setTimeout(()=>{
-              if(netRoom && netRoom.phase==="lobby"){ update(net.roomRef,{phase:"fight"}).catch(()=>{}); }
-            },1200);
-          }
-        }
-      }
-      if(r.phase==="fight" && !net.started){
-        if(net.fightKick){ clearTimeout(net.fightKick); net.fightKick=null; }
-        startNetArena(r);
-      }
+      if(!r){ if(net.started){ arenaMsg.textContent="El rival salió."; gameOver=true; } else if($("s-wait").classList.contains("active")){ alert("La sala se cerró."); go("home"); } cleanupNet(); return; }
+      if(r.phase==="lobby" || r.phase==="countdown") renderWait(r);
+      if(r.phase==="countdown" && !waitCountdownStarted && !net.started){ waitCountdownStarted=true; runWaitCountdown(); }
+      if(r.phase==="fight" && !net.started){ startNetArena(r); }
     });
   }
-  function cleanupNet(){ if(net.fightKick){ clearTimeout(net.fightKick); net.fightKick=null; } if(net.unsub){ off(net.roomRef); net.unsub=null; } net.started=false; }
+  function runWaitCountdown(){
+    let n=5; $("wait-countdown").textContent=n;
+    const iv=setInterval(async()=>{
+      n--;
+      if(n>0){ $("wait-countdown").textContent=n; }
+      else{
+        clearInterval(iv); $("wait-countdown").textContent="";
+        if(net.side==="p1"){ try{ await update(net.roomRef,{phase:"fight"}); }catch(e){} }
+      }
+    },1000);
+  }
+  function cleanupNet(){ if(net.unsub){ off(net.roomRef); net.unsub=null; } net.started=false; }
   async function leaveRoom(){
     cleanupNet();
     try{ if(net.code){ if(net.side==="p1") await remove(ref(db,"enf_rooms/"+net.code)); else await remove(ref(db,"enf_rooms/"+net.code+"/p2")); } }catch(e){}
@@ -784,7 +810,7 @@
     p1.hp=p1.maxHP=hp; p2.hp=p2.maxHP=hp;
     gameOver=false; msgTimer=0; clashCooldown=0; arenaMsg.textContent="";
     touch.up=touch.down=touch.left=touch.right=false;
-    countdown=300;
+    countdown=0;
     $("arena-again").style.display="none";
     const modeName = cfg.fightMode==="larganoche"?"La Larga Noche ❄️":(cfg.fightMode==="frenesi"?"Frenesí":"Estándar");
     $("arena-mode").textContent = "🌐 Online · "+modeName+" · "+(cfg.dmgMode==="caos"?"Caos":"Normal");
