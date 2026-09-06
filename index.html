@@ -370,12 +370,30 @@
     net.unsub=onValue(net.roomRef, snap=>{
       const r=snap.val(); netRoom=r;
       if(!r){ if(net.started){ arenaMsg.textContent="El rival salió."; gameOver=true; } cleanupNet(); return; }
-      // host detecta que llegó p2 -> arranca la pelea
-      if(net.side==="p1" && r.p2 && r.phase==="lobby"){ update(net.roomRef,{phase:"fight"}); }
-      if(r.phase==="fight" && !net.started){ startNetArena(r); }
+      // Cuando ambos jugadores están presentes y la sala sigue en lobby, arrancar la pelea.
+      // Antes solo el host (p1) disparaba esto; si su listener no entraba, p2 se quedaba
+      // congelado en "¡Conectado! Empezando…". Ahora el host la dispara y p2 tiene red de
+      // seguridad por si el host tarda, de modo que la transición siempre ocurre.
+      const bothReady = r.p1 && r.p1.house && r.p2 && r.p2.house;
+      if(bothReady && r.phase==="lobby"){
+        if(net.side==="p1"){
+          update(net.roomRef,{phase:"fight"});
+        }else{
+          // p2: si el host no cambió la fase en ~1.2s, la empuja p2 como respaldo
+          if(!net.fightKick){
+            net.fightKick=setTimeout(()=>{
+              if(netRoom && netRoom.phase==="lobby"){ update(net.roomRef,{phase:"fight"}).catch(()=>{}); }
+            },1200);
+          }
+        }
+      }
+      if(r.phase==="fight" && !net.started){
+        if(net.fightKick){ clearTimeout(net.fightKick); net.fightKick=null; }
+        startNetArena(r);
+      }
     });
   }
-  function cleanupNet(){ if(net.unsub){ off(net.roomRef); net.unsub=null; } net.started=false; }
+  function cleanupNet(){ if(net.fightKick){ clearTimeout(net.fightKick); net.fightKick=null; } if(net.unsub){ off(net.roomRef); net.unsub=null; } net.started=false; }
   async function leaveRoom(){
     cleanupNet();
     try{ if(net.code){ if(net.side==="p1") await remove(ref(db,"enf_rooms/"+net.code)); else await remove(ref(db,"enf_rooms/"+net.code+"/p2")); } }catch(e){}
