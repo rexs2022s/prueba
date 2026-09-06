@@ -365,7 +365,7 @@
     const hp=(cfg.fightMode==="larganoche"?200:100);
     await set(net.roomRef, {
       createdAt:Date.now(), fightMode:cfg.fightMode, dmgMode:cfg.dmgMode,
-      p1:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:0,y:0,facing:1,crouch:false,attacking:0,attackDir:"front",shielding:false },
+      p1:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:205,y:390,facing:1,crouch:false,attacking:0,attackDir:"front",shielding:false },
       p2:null, phase:"lobby", hp:{p1:hp,p2:hp}, outcome:null
     });
     onDisconnect(net.roomRef).remove();
@@ -378,7 +378,7 @@
   // ---- unirse (p2) ----
   async function joinRoom(){
     net.roomRef=ref(db,"enf_rooms/"+net.code);
-    await update(net.roomRef, { p2:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:0,y:0,facing:-1,crouch:false,attacking:0,attackDir:"front",shielding:false } });
+    await update(net.roomRef, { p2:{ house:cfg.house.n, stats:cfg.stats, ready:false, x:435,y:390,facing:-1,crouch:false,attacking:0,attackDir:"front",shielding:false } });
     onDisconnect(ref(db,"enf_rooms/"+net.code+"/p2")).remove();
     $("wait-code").textContent=net.code;
     subscribeRoom(); go("wait");
@@ -709,8 +709,13 @@
   }
   function drawHP(){
     const bw=250,bh=16,pad=16;
-    hpBar(pad,pad,bw,bh,p1.hp/p1.maxHP,p1.color,"Casa "+p1.house.n,false,p1.maxHP);
-    hpBar(W-pad-bw,pad,bw,bh,p2.hp/p2.maxHP,p2.color,"CPU",true,p2.maxHP);
+    const p1label = (p1.house&&p1.house.n)?("Casa "+p1.house.n):"Jugador 1";
+    let p2label;
+    if(net.online) p2label = (p2.house&&p2.house.n)?("Casa "+p2.house.n):"Rival";
+    else if(cfg.practice) p2label="Maniquí";
+    else p2label="CPU";
+    hpBar(pad,pad,bw,bh,p1.hp/p1.maxHP,p1.color,p1label,false,p1.maxHP);
+    hpBar(W-pad-bw,pad,bw,bh,p2.hp/p2.maxHP,p2.color,p2label,true,p2.maxHP);
   }
   function hpBar(x,y,w,h,frac,color,label,right,maxhp){
     ctx.fillStyle="#0f0d0b"; ctx.strokeStyle="#554b40"; ctx.lineWidth=1.5; ctx.fillRect(x,y,w,h); ctx.strokeRect(x,y,w,h);
@@ -857,7 +862,12 @@
     p2.x=p2.x+(netOppTarget.x-p2.x)*0.25;
     p2.y=p2.y+(netOppTarget.y-p2.y)*0.25;
     p2.facing=netOppTarget.facing; p2.crouch=netOppTarget.crouch;
+    const wasAttacking=p2.attacking;
     p2.attacking=netOppTarget.attacking; p2.attackDir=netOppTarget.attackDir; p2.shielding=netOppTarget.shielding;
+    // resetear flag de golpe del rival cuando NO está atacando (si no, solo pega una vez)
+    if(p2.attacking<=0) p2._netHitDone=false;
+    // tick de hitflash del rival
+    if(p2.hitFlash>0)p2.hitFlash--;
   }
   // árbitro (solo p1): calcula golpes y sube vida/resultado
   let netHitCD=0;
